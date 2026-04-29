@@ -33,6 +33,7 @@ sudo apt install jq python3
 ```
 claude-session list              # all sessions, newest first
 claude-session list --here       # only sessions started in $PWD
+claude-session resume <id>       # resume a session in its original project
 claude-session delete <id>       # delete by UUID or unique 4+ char prefix
 claude-session delete <id> -f    # skip confirmation
 claude-session help
@@ -47,9 +48,12 @@ e5f6a7b8  2026-04-11 09:15:48  /review                                   42  ~/p
 9c8d7e6f  2026-04-10 18:44:22  /plan add OAuth login                    310  ~/projects/another-app
 ```
 
-`delete` accepts UUID prefixes (≥ 4 chars). Ambiguous prefixes are rejected
-to prevent removing the wrong session. The session's sidecar directory
-(`<uuid>/`) is removed alongside the `.jsonl`.
+`resume` and `delete` both accept UUID prefixes (≥ 4 chars). Ambiguous prefixes
+are rejected to prevent acting on the wrong session. `resume` reads the
+session's original `cwd` from the JSONL itself (more reliable than decoding
+the project directory name) and `cd`s there before handing off to
+`claude --resume <uuid>`. The session's sidecar directory (`<uuid>/`) is
+removed by `delete` alongside the `.jsonl`.
 
 ## Uninstall
 

@@ -62,12 +62,16 @@ claude-session — manage Claude Code session logs
 
 Usage:
   claude-session list [--here]
+  claude-session resume <id>
   claude-session delete <id> [<id>...] [-f|--force]
   claude-session help
 
 Commands:
   list                  Show all sessions across projects, newest first.
                         --here   only sessions for the current directory.
+  resume <id>           Resume a session by UUID or unique prefix (>= 4 chars).
+                        Cd's into the session's original project, then execs
+                        `claude --resume <uuid>`.
   delete <id>           Delete by UUID or unique UUID prefix (>= 4 chars).
                         Removes the .jsonl AND its sidecar dir.
                         -f / --force  skip confirmation.
@@ -305,12 +309,52 @@ cmd_delete() {
   done
 }
 
+cmd_resume() {
+  local id="${1:-}"
+  [[ -n "$id" ]] || { echo "claude-session: resume requires <id>" >&2; return 2; }
+  if (( ${#id} < 4 )); then
+    echo "claude-session: id must be >= 4 chars: '$id'" >&2; return 2
+  fi
+
+  shopt -s nullglob
+  local matches=( "$ROOT"/*/"$id"*.jsonl )
+  shopt -u nullglob
+  case "${#matches[@]}" in
+    0) echo "claude-session: no match for '$id'" >&2; return 1 ;;
+    1) ;;
+    *) echo "claude-session: '$id' is ambiguous, matches:" >&2
+       printf '  %s\n' "${matches[@]}" >&2; return 1 ;;
+  esac
+
+  command -v claude >/dev/null \
+    || { echo "claude-session: 'claude' CLI not found on PATH" >&2; return 1; }
+
+  local f="${matches[0]}"
+  local full_id; full_id="$(basename "$f" .jsonl)"
+
+  # The session's original cwd is stored in the JSONL itself. Decoding the
+  # project directory name is lossy ('.' and '/' both collapse to '-'), so we
+  # use the in-file `cwd` field as the authoritative source.
+  local sess_cwd
+  sess_cwd="$( { jq -r 'select(.cwd) | .cwd' "$f" 2>/dev/null | head -n1; } || true )"
+
+  if [[ -n "$sess_cwd" && -d "$sess_cwd" ]]; then
+    cd "$sess_cwd" || true
+  elif [[ -n "$sess_cwd" ]]; then
+    echo "warning: session cwd '$sess_cwd' no longer exists; resuming from $PWD" >&2
+  fi
+
+  # Hand control to claude; this process is replaced.
+  exec claude --resume "$full_id"
+}
+
 main() {
   require_jq
   local sub="${1:-help}"; shift || true
   case "$sub" in
     list)            cmd_list   "$@" ;;
     delete)          cmd_delete "$@" ;;
+    resume)          cmd_resume "$@" ;;
     help|-h|--help|"") usage ;;
     *) echo "claude-session: unknown command: $sub" >&2; usage; return 2 ;;
   esac

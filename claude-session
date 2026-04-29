@@ -92,12 +92,25 @@ decode_project() {
   printf '/%s' "${enc#-}" | tr '-' '/'
 }
 
+# Read the session's most recent `/rename` from the JSONL itself.
+# /resume shows this when present, so we honor it as the highest-priority title.
+# Multiple custom-title records may exist (user renamed more than once); the
+# last one wins because that reflects the user's final intent.
+custom_title_from_jsonl() {
+  local f="$1"
+  # The surrounding `tail -n1` picks the LAST such record (latest /rename).
+  { jq -r '
+      select(.type=="custom-title" and .customTitle!=null) | .customTitle
+    ' "$f" 2>/dev/null | tail -n1; } || true
+}
+
 # Emit ONE TSV row per session for the python formatter to render:
 #   <full_id>\t<mtime_epoch>\t<msgs>\t<project>\t<title>
 # Title resolution mirrors Claude Code's `/resume`:
-#   1. earliest history.jsonl entry for this sessionId (.display)
-#   2. fallback: first last-prompt record in the JSONL (.lastPrompt)
-#   3. fallback: "(no prompt)"
+#   1. latest `type:"custom-title"` record in the JSONL (set by `/rename`)
+#   2. earliest history.jsonl entry for this sessionId (.display)
+#   3. fallback: first last-prompt record in the JSONL (.lastPrompt)
+#   4. fallback: "(no prompt)"
 format_session_row() {
   local f="$1" full_id mtime msgs project title
   full_id="$(basename "$f" .jsonl)"
@@ -105,7 +118,8 @@ format_session_row() {
   msgs="$(wc -l < "$f")"
   project="$(decode_project "$(basename "$(dirname "$f")")")"
 
-  title="$(title_for_session "$full_id")"
+  title="$(custom_title_from_jsonl "$f")"
+  [[ -z "$title" ]] && title="$(title_for_session "$full_id")"
   if [[ -z "$title" ]]; then
     title="$( { jq -r '
         select(.type=="last-prompt" and .lastPrompt!=null) | .lastPrompt

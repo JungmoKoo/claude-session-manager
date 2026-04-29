@@ -1,0 +1,318 @@
+#!/usr/bin/env bash
+# claude-session — list and delete Claude Code session logs
+#
+# Sessions live under $HOME/.claude/projects/<encoded-cwd>/<uuid>.jsonl
+# with an optional sibling <uuid>/ sidecar directory.
+set -euo pipefail
+
+ROOT="${CLAUDE_PROJECTS_DIR:-$HOME/.claude/projects}"
+HISTORY="$HOME/.claude/history.jsonl"
+
+# Cross-platform file mtime as Unix epoch seconds (formatter handles display).
+case "$(uname)" in
+  Darwin) file_mtime_epoch() { stat -f '%m' "$1"; } ;;
+  *)      file_mtime_epoch() { stat -c '%Y' "$1"; } ;;
+esac
+
+# Title cache as parallel indexed arrays. Avoids `declare -gA` (bash 4+),
+# so this works on macOS's stock bash 3.2 too.
+TITLE_KEYS=()
+TITLE_VALS=()
+TITLE_TSS=()
+
+# Linear search; echoes index or -1.
+_title_idx() {
+  local sid="$1" i
+  for i in "${!TITLE_KEYS[@]}"; do
+    [[ "${TITLE_KEYS[$i]}" == "$sid" ]] && { echo "$i"; return; }
+  done
+  echo -1
+}
+
+# Build sessionId -> earliest-prompt map from ~/.claude/history.jsonl in one
+# jq pass. The earliest `.display` per sessionId is what `/resume` shows.
+load_history_titles() {
+  [[ -f "$HISTORY" ]] || return 0
+  local ts sid display idx
+  while IFS=$'\t' read -r ts sid display; do
+    [[ -z "$sid" || -z "$ts" ]] && continue
+    idx=$(_title_idx "$sid")
+    if [[ "$idx" == "-1" ]]; then
+      TITLE_KEYS+=( "$sid" )
+      TITLE_TSS+=( "$ts" )
+      TITLE_VALS+=( "$display" )
+    elif (( ts < ${TITLE_TSS[$idx]} )); then
+      TITLE_TSS[$idx]="$ts"
+      TITLE_VALS[$idx]="$display"
+    fi
+  done < <(jq -r '[.timestamp, .sessionId, .display] | @tsv' "$HISTORY" 2>/dev/null)
+}
+
+title_for_session() {
+  local idx; idx=$(_title_idx "$1")
+  # `|| :` keeps the function's exit code at 0 even when there is no match;
+  # otherwise `title=$(title_for_session ...)` propagates the failure and
+  # `set -e` aborts the whole list mid-iteration on the first miss.
+  [[ "$idx" != "-1" ]] && printf '%s' "${TITLE_VALS[$idx]}" || :
+}
+
+usage() {
+  cat <<'EOF'
+claude-session — manage Claude Code session logs
+
+Usage:
+  claude-session list [--here]
+  claude-session delete <id> [<id>...] [-f|--force]
+  claude-session help
+
+Commands:
+  list                  Show all sessions across projects, newest first.
+                        --here   only sessions for the current directory.
+  delete <id>           Delete by UUID or unique UUID prefix (>= 4 chars).
+                        Removes the .jsonl AND its sidecar dir.
+                        -f / --force  skip confirmation.
+EOF
+}
+
+require_jq() {
+  command -v jq >/dev/null || { echo "claude-session: needs 'jq' on PATH" >&2; exit 1; }
+}
+
+# /home/alice/.claude -> -home-alice--claude    (replace / and . with -)
+encode_path() { printf '%s' "$1" | tr '/.' '--'; }
+
+# Best-effort reverse for display only. Original '-' or '.' chars are not
+# recoverable, so we just swap '-' back to '/'.
+decode_project() {
+  local enc="$1"
+  printf '/%s' "${enc#-}" | tr '-' '/'
+}
+
+# Emit ONE TSV row per session for the python formatter to render:
+#   <full_id>\t<mtime_epoch>\t<msgs>\t<project>\t<title>
+# Title resolution mirrors Claude Code's `/resume`:
+#   1. earliest history.jsonl entry for this sessionId (.display)
+#   2. fallback: first last-prompt record in the JSONL (.lastPrompt)
+#   3. fallback: "(no prompt)"
+format_session_row() {
+  local f="$1" full_id mtime msgs project title
+  full_id="$(basename "$f" .jsonl)"
+  mtime="$(file_mtime_epoch "$f")"
+  msgs="$(wc -l < "$f")"
+  project="$(decode_project "$(basename "$(dirname "$f")")")"
+
+  title="$(title_for_session "$full_id")"
+  if [[ -z "$title" ]]; then
+    title="$( { jq -r '
+        select(.type=="last-prompt" and .lastPrompt!=null) | .lastPrompt
+      ' "$f" 2>/dev/null | head -n1; } || true )"
+  fi
+  [[ -z "$title" ]] && title="(no prompt)"
+  # Tabs/newlines would break the TSV line.
+  title="$(printf '%s' "$title" | tr '\n\t' '  ')"
+
+  printf '%s\t%s\t%s\t%s\t%s\n' \
+    "$full_id" "$mtime" "$msgs" "$project" "$title"
+}
+
+# Renderer: reads TSV rows from stdin, prints a styled table.
+# Colors emit only when stdout is a TTY (safe to pipe to grep/awk).
+format_list() {
+  python3 <(cat <<'PY'
+import sys, os, time, datetime, unicodedata, shutil
+
+NOW  = time.time()
+TTY  = sys.stdout.isatty()
+HOME = os.path.expanduser('~')
+
+def cw(c):  return 2 if unicodedata.east_asian_width(c) in ('W','F') else 1
+def vlen(s): return sum(cw(c) for c in s)
+def vtrunc(s, w):
+    out, used = [], 0
+    for c in s:
+        n = cw(c)
+        if used + n > w: break
+        out.append(c); used += n
+    return ''.join(out), used
+def vpad(s, w):
+    t, used = vtrunc(s, w)
+    return t + ' ' * (w - used)
+def vrlefttrunc(s, w):
+    """Right-align; if too wide, drop from the LEFT with an ellipsis."""
+    if vlen(s) <= w: return ' ' * (w - vlen(s)) + s
+    out, used, target = [], 0, w - 1
+    for c in reversed(s):
+        n = cw(c)
+        if used + n > target: break
+        out.append(c); used += n
+    return '…' + ''.join(reversed(out)) + ' ' * max(0, w - used - 1)
+
+def reltime(t):
+    d = NOW - t
+    if d < 0:        return 'future'
+    if d < 60:       return 'just now'
+    if d < 3600:     return f'{int(d/60)}m ago'
+    if d < 86400:    return f'{int(d/3600)}h ago'
+    if d < 86400*7:  return f'{int(d/86400)}d ago'
+    return datetime.datetime.fromtimestamp(t).strftime('%Y-%m-%d')
+
+def shorten(p):
+    # The encoder turned both '/' and '.' into '-', so '//' on decode is most
+    # often where a '.' originally lived (e.g. '.claude'). Guess accordingly.
+    p = p.replace('//', '/.')
+    if p.startswith(HOME + '/'): p = '~' + p[len(HOME):]
+    elif p == HOME:              p = '~'
+    return p
+
+def C(code, s): return f'\033[{code}m{s}\033[0m' if TTY else s
+DIM  = lambda s: C('2', s)
+BOLD = lambda s: C('1', s)
+GRAY = lambda s: C('38;5;245', s)
+CYAN = lambda s: C('36', s)
+
+rows = []
+for line in sys.stdin:
+    parts = line.rstrip('\n').split('\t')
+    if len(parts) != 5: continue
+    fid, mt, msgs, project, title = parts
+    rows.append(dict(
+        id=fid[:8],
+        mtime=float(mt) if mt else 0.0,
+        msgs=msgs,
+        project=shorten(project),
+        title=title or '(no prompt)',
+    ))
+
+if not rows:
+    sys.exit(0)
+
+ID_W   = 8
+MSGS_W = 5
+TIME_W = max(8, max(len(reltime(r['mtime'])) for r in rows))
+TERM_W = shutil.get_terminal_size((100, 20)).columns
+SEP_W  = 2 * 4  # 4 inter-column gaps of 2 spaces
+remaining = max(40, TERM_W - ID_W - TIME_W - MSGS_W - SEP_W)
+TITLE_W = max(20, int(remaining * 0.62))
+PROJ_W  = max(10, remaining - TITLE_W)
+
+def line(id_s, time_s, title_s, msgs_s, proj_s):
+    return f'{id_s}  {time_s}  {title_s}  {msgs_s}  {proj_s}'
+
+# Header
+print(BOLD(line(
+    vpad('ID',       ID_W),
+    vpad('MODIFIED', TIME_W),
+    vpad('TITLE',    TITLE_W),
+    vpad('MSGS',     MSGS_W),
+    vpad('PROJECT',  PROJ_W),
+)))
+# Rule
+print(DIM(line(
+    '─' * ID_W,
+    '─' * TIME_W,
+    '─' * TITLE_W,
+    '─' * MSGS_W,
+    '─' * PROJ_W,
+)))
+# Data
+for r in rows:
+    print(line(
+        GRAY(vpad(r['id'], ID_W)),
+        DIM(vpad(reltime(r['mtime']), TIME_W)),
+        vpad(r['title'], TITLE_W),
+        DIM(r['msgs'].rjust(MSGS_W)),
+        CYAN(vrlefttrunc(r['project'], PROJ_W)),
+    ))
+PY
+)
+}
+# -------------------------------------------------------------------------
+
+cmd_list() {
+  local here=0
+  case "${1:-}" in
+    --here) here=1 ;;
+    "") ;;
+    *) echo "claude-session list: unknown arg: $1" >&2; return 2 ;;
+  esac
+
+  load_history_titles
+  shopt -s nullglob
+  local files=()
+  if (( here )); then
+    local enc; enc="$(encode_path "$PWD")"
+    files=( "$ROOT/$enc"/*.jsonl )
+  else
+    files=( "$ROOT"/*/*.jsonl )
+  fi
+  shopt -u nullglob
+
+  if (( ${#files[@]} == 0 )); then
+    echo "(no sessions found)"
+    return 0
+  fi
+
+  # Gather rows newest-first, render through python.
+  while IFS= read -r f; do
+    format_session_row "$f"
+  done < <(ls -t "${files[@]}") | format_list
+}
+
+cmd_delete() {
+  local force=0 ids=()
+  for arg in "$@"; do
+    case "$arg" in
+      -f|--force) force=1 ;;
+      -*) echo "claude-session: unknown flag: $arg" >&2; return 2 ;;
+      *)  ids+=( "$arg" ) ;;
+    esac
+  done
+  (( ${#ids[@]} > 0 )) || { echo "claude-session: delete requires <id>" >&2; return 2; }
+
+  local to_delete=()
+  for id in "${ids[@]}"; do
+    if (( ${#id} < 4 )); then
+      echo "claude-session: id must be >= 4 chars: '$id'" >&2; return 2
+    fi
+    shopt -s nullglob
+    local matches=( "$ROOT"/*/"$id"*.jsonl )
+    shopt -u nullglob
+    case "${#matches[@]}" in
+      0) echo "claude-session: no match for '$id'" >&2; return 1 ;;
+      1) to_delete+=( "${matches[0]}" ) ;;
+      *) echo "claude-session: '$id' is ambiguous, matches:" >&2
+         printf '  %s\n' "${matches[@]}" >&2; return 1 ;;
+    esac
+  done
+
+  echo "About to delete:"
+  for f in "${to_delete[@]}"; do
+    local sidecar="${f%.jsonl}"
+    printf '  %s\n' "$f"
+    [[ -d "$sidecar" ]] && printf '  %s/  (sidecar)\n' "$sidecar"
+  done
+
+  if (( ! force )); then
+    read -r -p "Proceed? [y/N] " ans </dev/tty
+    [[ "$ans" =~ ^[Yy]$ ]] || { echo "aborted."; return 1; }
+  fi
+
+  for f in "${to_delete[@]}"; do
+    local sidecar="${f%.jsonl}"
+    rm -f -- "$f"
+    [[ -d "$sidecar" ]] && rm -rf -- "$sidecar"
+    echo "deleted $(basename "$f" .jsonl)"
+  done
+}
+
+main() {
+  require_jq
+  local sub="${1:-help}"; shift || true
+  case "$sub" in
+    list)            cmd_list   "$@" ;;
+    delete)          cmd_delete "$@" ;;
+    help|-h|--help|"") usage ;;
+    *) echo "claude-session: unknown command: $sub" >&2; usage; return 2 ;;
+  esac
+}
+main "$@"

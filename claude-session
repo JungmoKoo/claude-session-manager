@@ -62,16 +62,21 @@ claude-session — manage Claude Code session logs
 
 Usage:
   claude-session list [--here]
-  claude-session resume <id>
+  claude-session resume <id> [-- claude-flags...]
   claude-session delete <id> [<id>...] [-f|--force]
   claude-session help
 
 Commands:
   list                  Show all sessions across projects, newest first.
                         --here   only sessions for the current directory.
-  resume <id>           Resume a session by UUID or unique prefix (>= 4 chars).
+  resume <id> [args]    Resume a session by UUID or unique prefix (>= 4 chars).
                         Cd's into the session's original project, then execs
-                        `claude --resume <uuid>`.
+                        `claude --resume <uuid> [args]`.
+                        With no args and a TTY, prompts:
+                          1) default
+                          2) dangerously-skip-permissions
+                        Any args after <id> are forwarded verbatim to `claude`
+                        and bypass the prompt (e.g. --tmux, custom flags).
   delete <id>           Delete by UUID or unique UUID prefix (>= 4 chars).
                         Removes the .jsonl AND its sidecar dir.
                         -f / --force  skip confirmation.
@@ -323,9 +328,24 @@ cmd_delete() {
   done
 }
 
+# Interactive picker for the resume mode. Echoes the chosen digit on stdout
+# (UI goes to stderr so command substitution stays clean). Default is 1.
+prompt_resume_mode() {
+  local choice
+  {
+    echo
+    echo "Resume mode:"
+    echo "  1) default"
+    echo "  2) dangerously-skip-permissions"
+  } >&2
+  read -r -p "Choice [1]: " choice </dev/tty
+  printf '%s' "${choice:-1}"
+}
+
 cmd_resume() {
   local id="${1:-}"
   [[ -n "$id" ]] || { echo "claude-session: resume requires <id>" >&2; return 2; }
+  shift  # remaining "$@" is forwarded verbatim to `claude --resume`
   if (( ${#id} < 4 )); then
     echo "claude-session: id must be >= 4 chars: '$id'" >&2; return 2
   fi
@@ -358,8 +378,19 @@ cmd_resume() {
     echo "warning: session cwd '$sess_cwd' no longer exists; resuming from $PWD" >&2
   fi
 
+  # If no passthrough flags were given AND we have a TTY, offer the picker.
+  # `set --` rewrites positional args so the exec line below stays unchanged
+  # whether the flags came from CLI or from the menu.
+  if (( $# == 0 )) && [[ -t 0 ]]; then
+    case "$(prompt_resume_mode)" in
+      1) ;;
+      2) set -- --dangerously-skip-permissions ;;
+      *) echo "claude-session: invalid resume-mode choice" >&2; return 2 ;;
+    esac
+  fi
+
   # Hand control to claude; this process is replaced.
-  exec claude --resume "$full_id"
+  exec claude --resume "$full_id" "$@"
 }
 
 main() {

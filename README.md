@@ -6,8 +6,10 @@ you don't need.
 
 ## Installation
 
-> **Supported on Linux and macOS.** Works with macOS's stock `/bin/bash` (3.2)
-> as well as bash 4+. Windows is not supported.
+> **Supported on Linux, macOS, and Windows (via Git Bash).** Works with
+> macOS's stock `/bin/bash` (3.2) as well as bash 4+. On Windows the
+> installer also drops a `claude-session.cmd` shim so PowerShell and
+> `cmd.exe` can invoke it by name.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/JungmoKoo/claude-session-manager/main/install.sh | bash
@@ -17,16 +19,34 @@ Installs to `~/.local/bin/claude-session`. Override with `PREFIX=/usr/local/bin`
 
 ### Requirements
 
-- `bash` ≥ 3.2 (macOS stock bash works)
+- `bash` ≥ 3.2 (macOS stock bash works; on Windows, [Git for Windows](https://git-scm.com/download/win) provides one)
 - `jq`
-- `python3` (for CJK-aware column padding)
+- `python3` (for CJK-aware column padding); `py -3` and `python` are also
+  accepted, so you don't need a literal `python3` on PATH
 
 ```bash
 # macOS
 brew install jq python3
 # Debian / Ubuntu
 sudo apt install jq python3
+# Windows (Git Bash, run from any shell)
+winget install jqlang.jq
+# plus Python 3 from https://www.python.org/downloads/
+# (Windows' default 'python3' alias is often a Microsoft Store redirector
+#  that does nothing; the script transparently falls back to 'py -3' or
+#  'python', so installing python.org's Python is enough.)
 ```
+
+### Windows notes
+
+- For the prettiest table output, run inside a UTF-8 console (Windows
+  Terminal works out of the box; in classic `cmd.exe` run `chcp 65001`
+  first). Otherwise the U+2500 box-drawing rule degrades gracefully to
+  plain ASCII `-`.
+- Project paths displayed by `list` are decoded to the `C:/Users/...`
+  form. Drive letter case mirrors what was active when Claude Code first
+  saw the directory; the `--here` filter normalizes the current shell's
+  POSIX cwd back to that form before matching.
 
 ## Usage
 

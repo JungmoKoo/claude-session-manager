@@ -14,6 +14,14 @@ case "$(uname)" in
   *)      file_mtime_epoch() { stat -c '%Y' "$1"; } ;;
 esac
 
+# True on Windows-flavored bashes (Git Bash, MSYS2, Cygwin).
+is_windows_bash() {
+  case "$(uname)" in
+    MINGW*|MSYS*|CYGWIN*) return 0 ;;
+    *)                    return 1 ;;
+  esac
+}
+
 # Title cache as parallel indexed arrays. Avoids `declare -gA` (bash 4+),
 # so this works on macOS's stock bash 3.2 too.
 TITLE_KEYS=()
@@ -87,13 +95,59 @@ require_jq() {
   command -v jq >/dev/null || { echo "claude-session: needs 'jq' on PATH" >&2; exit 1; }
 }
 
-# /home/alice/.claude -> -home-alice--claude    (replace / and . with -)
-encode_path() { printf '%s' "$1" | tr '/.' '--'; }
+# Locate a working Python 3 interpreter and store the launch command in
+# PYTHON3 (may be multiple words, e.g. "py -3"). On Windows, the bare
+# `python3` on PATH is often a Microsoft Store redirector that produces no
+# output, so probe each candidate with a real import and fall through to
+# `py -3` (Python launcher) and `python` if needed.
+require_python3() {
+  local cand
+  for cand in python3 'py -3' python; do
+    # shellcheck disable=SC2086
+    if $cand -c 'import sys; raise SystemExit(0 if sys.version_info[0]==3 else 1)' \
+         </dev/null >/dev/null 2>&1; then
+      PYTHON3="$cand"
+      return 0
+    fi
+  done
+  echo "claude-session: needs python 3 on PATH (tried: python3, py -3, python)" >&2
+  exit 1
+}
 
-# Best-effort reverse for display only. Original '-' or '.' chars are not
-# recoverable, so we just swap '-' back to '/'.
+# Encode a cwd into Claude Code's project-directory name.
+#   Linux/macOS:  /home/alice/.claude    -> -home-alice--claude
+#   Windows:      C:\Users\alice         -> C--Users-alice
+# On Git Bash / MSYS / Cygwin the working directory is reported as
+# /c/Users/alice, but Claude Code itself stores the Windows form, so we
+# convert before encoding.
+encode_path() {
+  local p="$1"
+  if is_windows_bash; then
+    if command -v cygpath >/dev/null 2>&1; then
+      p="$(cygpath -m -- "$p")"
+    elif [[ "$p" =~ ^/([a-zA-Z])(/.*)?$ ]]; then
+      p="${BASH_REMATCH[1]}:${BASH_REMATCH[2]:-/}"
+    fi
+    p="${p//:/-}"
+    p="${p//\\/-}"
+  fi
+  p="${p//\//-}"
+  p="${p//./-}"
+  printf '%s' "$p"
+}
+
+# Best-effort reverse for display only. The encoder is lossy ('/', '.',
+# and on Windows ':' / '\\' all collapse to '-'), so this is a heuristic.
+#   Windows form ("<letter>--..." e.g. C--Users-alice) decodes to
+#   "C:/Users/alice"; everything else uses the Unix shape.
 decode_project() {
   local enc="$1"
+  if [[ "$enc" =~ ^([a-zA-Z])--(.*)$ ]]; then
+    local drive="${BASH_REMATCH[1]}" rest="${BASH_REMATCH[2]}"
+    rest="${rest//-//}"
+    printf '%s:/%s' "$drive" "$rest"
+    return
+  fi
   printf '/%s' "${enc#-}" | tr '-' '/'
 }
 
@@ -140,13 +194,30 @@ format_session_row() {
 
 # Renderer: reads TSV rows from stdin, prints a styled table.
 # Colors emit only when stdout is a TTY (safe to pipe to grep/awk).
+#
+# We materialize the Python source to a temp file (instead of using process
+# substitution `python3 <(...)`) so that native Windows python.exe — which
+# can't read the MSYS-virtual /dev/fd/N path that bash's <(...) hands out —
+# works alongside Linux/macOS.
 format_list() {
-  python3 <(cat <<'PY'
-import sys, os, time, datetime, unicodedata, shutil
+  local pyfile rc
+  pyfile="$(mktemp)" || { echo "claude-session: mktemp failed" >&2; return 1; }
+  cat >"$pyfile" <<'PY'
+import sys, os, re, time, datetime, unicodedata, shutil
 
 NOW  = time.time()
 TTY  = sys.stdout.isatty()
 HOME = os.path.expanduser('~')
+
+# Decorative glyphs fall back to ASCII when stdout isn't UTF-8.
+# We can't just try-encode '─' / '…' because Windows code pages like
+# cp949 *do* contain mappings for them, but those bytes render as
+# mojibake in most consoles. Restricting these glyphs to UTF-8
+# sidesteps the problem.
+_enc = (sys.stdout.encoding or 'ascii').lower().replace('-', '')
+_UNICODE_OK = _enc in ('utf8', 'cp65001')
+RULE = '─' if _UNICODE_OK else '-'
+ELL  = '…' if _UNICODE_OK else '...'
 
 def cw(c):  return 2 if unicodedata.east_asian_width(c) in ('W','F') else 1
 def vlen(s): return sum(cw(c) for c in s)
@@ -161,14 +232,14 @@ def vpad(s, w):
     t, used = vtrunc(s, w)
     return t + ' ' * (w - used)
 def vrlefttrunc(s, w):
-    """Right-align; if too wide, drop from the LEFT with an ellipsis."""
     if vlen(s) <= w: return ' ' * (w - vlen(s)) + s
-    out, used, target = [], 0, w - 1
+    ew = vlen(ELL)
+    out, used, target = [], 0, w - ew
     for c in reversed(s):
         n = cw(c)
         if used + n > target: break
         out.append(c); used += n
-    return '…' + ''.join(reversed(out)) + ' ' * max(0, w - used - 1)
+    return ELL + ''.join(reversed(out)) + ' ' * max(0, w - used - ew)
 
 def reltime(t):
     d = NOW - t
@@ -179,12 +250,43 @@ def reltime(t):
     if d < 86400*7:  return f'{int(d/86400)}d ago'
     return datetime.datetime.fromtimestamp(t).strftime('%Y-%m-%d')
 
+def _home_forms():
+    # HOME can show up in several spellings depending on which side of
+    # the MSYS / native-Windows boundary we got it from:
+    #   /c/Users/alice  (Git Bash / MSYS)
+    #   C:/Users/alice  (decoded project path)
+    #   C:\Users\alice  (native python.exe via os.path.expanduser)
+    # Generate every plausible variant so the '~' shortening still
+    # matches regardless of which side wins.
+    forms = {HOME, HOME.replace('\\', '/')}
+    h = HOME.replace('\\', '/')
+    m = re.match(r'^/([a-zA-Z])(/.*)?$', h)
+    if m:
+        d, rest = m.group(1), m.group(2) or ''
+        forms.update({d.lower() + ':' + rest, d.upper() + ':' + rest})
+    m = re.match(r'^([a-zA-Z]):(/.*)?$', h)
+    if m:
+        d, rest = m.group(1), m.group(2) or ''
+        forms.update({
+            '/' + d.lower() + rest,
+            d.lower() + ':' + rest,
+            d.upper() + ':' + rest,
+        })
+    return list(forms)
+
 def shorten(p):
-    # The encoder turned both '/' and '.' into '-', so '//' on decode is most
-    # often where a '.' originally lived (e.g. '.claude'). Guess accordingly.
+    # Encoder collapsed both '/' and '.' to '-', so '//' on decode is most
+    # often where a '.' originally lived (e.g. '.claude').
     p = p.replace('//', '/.')
-    if p.startswith(HOME + '/'): p = '~' + p[len(HOME):]
-    elif p == HOME:              p = '~'
+    homes = _home_forms()
+    for h in homes:
+        if p == h:                  return '~'
+        if p.startswith(h + '/'):   return '~' + p[len(h):]
+    pl = p.lower()
+    for h in homes:
+        hl = h.lower()
+        if pl == hl:                return '~'
+        if pl.startswith(hl + '/'): return '~' + p[len(h):]
     return p
 
 def C(code, s): return f'\033[{code}m{s}\033[0m' if TTY else s
@@ -231,11 +333,11 @@ print(BOLD(line(
 )))
 # Rule
 print(DIM(line(
-    '─' * ID_W,
-    '─' * TIME_W,
-    '─' * TITLE_W,
-    '─' * MSGS_W,
-    '─' * PROJ_W,
+    RULE * ID_W,
+    RULE * TIME_W,
+    RULE * TITLE_W,
+    RULE * MSGS_W,
+    RULE * PROJ_W,
 )))
 # Data
 for r in rows:
@@ -247,7 +349,11 @@ for r in rows:
         CYAN(vrlefttrunc(r['project'], PROJ_W)),
     ))
 PY
-)
+  # shellcheck disable=SC2086
+  $PYTHON3 "$pyfile"
+  rc=$?
+  rm -f -- "$pyfile"
+  return $rc
 }
 # -------------------------------------------------------------------------
 
@@ -395,6 +501,7 @@ cmd_resume() {
 
 main() {
   require_jq
+  require_python3
   local sub="${1:-help}"; shift || true
   case "$sub" in
     list)            cmd_list   "$@" ;;

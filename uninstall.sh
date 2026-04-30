@@ -10,11 +10,18 @@ set -euo pipefail
 
 DEST_DIR="${PREFIX:-$HOME/.local/bin}"
 DEST="$DEST_DIR/claude-session"
+DEST_CMD="$DEST_DIR/claude-session.cmd"
 
-if [[ -e "$DEST" || -L "$DEST" ]]; then
-  rm -f "$DEST"
-  echo "removed $DEST"
-else
+removed=0
+for f in "$DEST" "$DEST_CMD"; do
+  if [[ -e "$f" || -L "$f" ]]; then
+    rm -f "$f"
+    echo "removed $f"
+    removed=1
+  fi
+done
+
+if (( ! removed )); then
   echo "not found at $DEST (already uninstalled?)"
   echo "  if you installed with a custom PREFIX, re-run:"
   echo "    PREFIX=/your/path bash uninstall.sh"

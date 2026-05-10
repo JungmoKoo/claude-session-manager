@@ -70,6 +70,7 @@ claude-session — manage Claude Code session logs
 
 Usage:
   claude-session list [--here]
+  claude-session start <name> [-- claude-flags...]
   claude-session resume <id> [-- claude-flags...]
   claude-session delete <id> [<id>...] [-f|--force]
   claude-session help
@@ -77,6 +78,14 @@ Usage:
 Commands:
   list                  Show all sessions across projects, newest first.
                         --here   only sessions for the current directory.
+  start <name> [args]   Launch a new session with <name> as its display title
+                        (equivalent to running `/rename <name>` inside claude).
+                        Execs `claude --name <name> [args]`.
+                        With no args and a TTY, prompts:
+                          1) default
+                          2) dangerously-skip-permissions
+                        Any args after <name> are forwarded verbatim to `claude`
+                        and bypass the prompt.
   resume <id> [args]    Resume a session by UUID or unique prefix (>= 4 chars).
                         Cd's into the session's original project, then execs
                         `claude --resume <uuid> [args]`.
@@ -448,6 +457,27 @@ prompt_resume_mode() {
   printf '%s' "${choice:-1}"
 }
 
+cmd_start() {
+  local name="${1:-}"
+  [[ -n "$name" ]] || { echo "claude-session: start requires <name>" >&2; return 2; }
+  shift  # remaining "$@" is forwarded verbatim to `claude`
+
+  command -v claude >/dev/null \
+    || { echo "claude-session: 'claude' CLI not found on PATH" >&2; return 1; }
+
+  # `claude --name` is the CLI equivalent of running `/rename <name>` once
+  # the session is up: both set the display title shown in the /resume picker.
+  if (( $# == 0 )) && [[ -t 0 ]]; then
+    case "$(prompt_resume_mode)" in
+      1) ;;
+      2) set -- --dangerously-skip-permissions ;;
+      *) echo "claude-session: invalid resume-mode choice" >&2; return 2 ;;
+    esac
+  fi
+
+  exec claude --name "$name" "$@"
+}
+
 cmd_resume() {
   local id="${1:-}"
   [[ -n "$id" ]] || { echo "claude-session: resume requires <id>" >&2; return 2; }
@@ -505,6 +535,7 @@ main() {
   local sub="${1:-help}"; shift || true
   case "$sub" in
     list)            cmd_list   "$@" ;;
+    start)           cmd_start  "$@" ;;
     delete)          cmd_delete "$@" ;;
     resume)          cmd_resume "$@" ;;
     help|-h|--help|"") usage ;;

@@ -4,38 +4,36 @@ A small CLI for managing [Claude Code](https://claude.com/claude-code) session
 logs — list past sessions with `/resume`-style titles, and delete the ones
 you don't need.
 
-## Installation
+## 🚀 Install — 2 steps
 
-> **Supported on Linux, macOS, and Windows (via Git Bash).** Works with
-> macOS's stock `/bin/bash` (3.2) as well as bash 4+. On Windows the
-> installer also drops a `claude-session.cmd` shim so PowerShell and
-> `cmd.exe` can invoke it by name.
+### 1️⃣ Install **bun**
+
+```bash
+curl -fsSL https://bun.sh/install | bash
+```
+
+> **Windows PowerShell**
+> ```powershell
+> irm https://bun.sh/install.ps1 | iex
+> ```
+
+Restart your shell so PATH is refreshed.
+
+### 2️⃣ Install **claude-session**
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/JungmoKoo/claude-session-manager/main/install.sh | bash
 ```
 
-Installs to `~/.local/bin/claude-session`. Override with `PREFIX=/usr/local/bin`.
+> **Windows PowerShell**
+> ```powershell
+> iwr https://raw.githubusercontent.com/JungmoKoo/claude-session-manager/main/install.sh -OutFile "$env:TEMP\install.sh"
+> & "$env:ProgramFiles\Git\bin\bash.exe" "$env:TEMP\install.sh"
+> ```
 
-### Requirements
-
-- `bash` ≥ 3.2 (macOS stock bash works; on Windows, [Git for Windows](https://git-scm.com/download/win) provides one)
-- `jq`
-- `python3` (for CJK-aware column padding); `py -3` and `python` are also
-  accepted, so you don't need a literal `python3` on PATH
-
-```bash
-# macOS
-brew install jq python3
-# Debian / Ubuntu
-sudo apt install jq python3
-# Windows (Git Bash, run from any shell)
-winget install jqlang.jq
-# plus Python 3 from https://www.python.org/downloads/
-# (Windows' default 'python3' alias is often a Microsoft Store redirector
-#  that does nothing; the script transparently falls back to 'py -3' or
-#  'python', so installing python.org's Python is enough.)
-```
+Installs to `~/.local/bin/claude-session`. Override with `PREFIX=/your/path`.
+On Windows the installer also drops a `claude-session.cmd` shim so
+PowerShell and `cmd.exe` can invoke it by name.
 
 ### Windows notes
 
@@ -108,6 +106,11 @@ source `/resume` reads — falling back to in-file `last-prompt` records.
 Project paths shown by `list` are best-effort decoded (the original
 encoding replaces both `/` and `.` with `-`, which isn't perfectly
 reversible).
+
+The script is a single TypeScript file run by [bun](https://bun.sh) — no
+separate `jq` / `python3` dependencies. The installer drops the `.ts`
+plus a tiny shell/`.cmd` wrapper that locates `bun` (in `PATH` or at
+`~/.bun/bin/bun`) and execs it on the script.
 
 ## License
 

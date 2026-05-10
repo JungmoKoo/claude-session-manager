@@ -10,10 +10,11 @@ set -euo pipefail
 
 DEST_DIR="${PREFIX:-$HOME/.local/bin}"
 DEST="$DEST_DIR/claude-session"
+DEST_TS="$DEST_DIR/claude-session.ts"
 DEST_CMD="$DEST_DIR/claude-session.cmd"
 
 removed=0
-for f in "$DEST" "$DEST_CMD"; do
+for f in "$DEST" "$DEST_TS" "$DEST_CMD"; do
   if [[ -e "$f" || -L "$f" ]]; then
     rm -f "$f"
     echo "removed $f"

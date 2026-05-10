@@ -100,4 +100,6 @@ if ! command -v bun >/dev/null 2>&1 \
 fi
 
 echo
-echo "Done. Try: claude-session help"
+echo "🎉  Installation complete!"
+echo "👉  Try:  claude-session help"
+echo "👉  List your sessions:  claude-session list"

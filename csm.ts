@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
-// claude-session — list, start, resume, and delete Claude Code session logs.
+// csm (Claude Session Manager) — list, start, resume, and delete Claude
+// Code session logs.
 //
 // Sessions live under $HOME/.claude/projects/<encoded-cwd>/<uuid>.jsonl
 // with an optional sibling <uuid>/ sidecar directory.
@@ -290,18 +291,18 @@ async function resolveSession(query: string): Promise<string> {
   if (titleMatches.length === 1) return titleMatches[0].file;
 
   if (idMatches.length > 1 && titleMatches.length === 0) {
-    process.stderr.write(`claude-session: '${query}' is ambiguous, matches:\n`);
+    process.stderr.write(`csm: '${query}' is ambiguous, matches:\n`);
     for (const f of idMatches) process.stderr.write(`  ${f}\n`);
     process.exit(1);
   }
   if (titleMatches.length > 1) {
-    process.stderr.write(`claude-session: '${query}' is ambiguous, matches:\n`);
+    process.stderr.write(`csm: '${query}' is ambiguous, matches:\n`);
     for (const m of titleMatches) {
       process.stderr.write(`  ${m.sid.slice(0, 8)}  ${m.title}\n`);
     }
     process.exit(1);
   }
-  process.stderr.write(`claude-session: no match for '${query}'\n`);
+  process.stderr.write(`csm: no match for '${query}'\n`);
   process.exit(1);
 }
 
@@ -316,7 +317,7 @@ function execClaude(args: string[], cwd?: string): never {
     shell: process.platform === "win32",
   });
   child.on("error", (e) => {
-    process.stderr.write(`claude-session: failed to exec claude: ${e.message}\n`);
+    process.stderr.write(`csm: failed to exec claude: ${e.message}\n`);
     process.exit(1);
   });
   child.on("exit", (code, signal) => {
@@ -342,7 +343,7 @@ async function maybePickMode(extra: string[]): Promise<string[]> {
   const choice = await promptResumeMode();
   if (choice === "1") return [];
   if (choice === "2") return ["--dangerously-skip-permissions"];
-  process.stderr.write("claude-session: invalid resume-mode choice\n");
+  process.stderr.write("csm: invalid resume-mode choice\n");
   process.exit(2);
 }
 
@@ -352,7 +353,7 @@ async function cmdList(args: string[]) {
   let here = false;
   if (args[0] === "--here") here = true;
   else if (args.length > 0) {
-    process.stderr.write(`claude-session list: unknown arg: ${args[0]}\n`);
+    process.stderr.write(`csm list: unknown arg: ${args[0]}\n`);
     process.exit(2);
   }
   await loadHistoryTitles();
@@ -427,7 +428,7 @@ async function cmdStart(args: string[]) {
 async function cmdResume(args: string[]) {
   const query = args[0];
   if (!query) {
-    process.stderr.write("claude-session: resume requires <id-or-title>\n");
+    process.stderr.write("csm: resume requires <id-or-title>\n");
     process.exit(2);
   }
   const file = await resolveSession(query);
@@ -453,12 +454,12 @@ async function cmdDelete(args: string[]) {
   for (const a of args) {
     if (a === "-f" || a === "--force") force = true;
     else if (a.startsWith("-")) {
-      process.stderr.write(`claude-session: unknown flag: ${a}\n`);
+      process.stderr.write(`csm: unknown flag: ${a}\n`);
       process.exit(2);
     } else ids.push(a);
   }
   if (ids.length === 0) {
-    process.stderr.write("claude-session: delete requires <id>\n");
+    process.stderr.write("csm: delete requires <id>\n");
     process.exit(2);
   }
 
@@ -466,16 +467,16 @@ async function cmdDelete(args: string[]) {
   const toDelete: string[] = [];
   for (const id of ids) {
     if (id.length < 4) {
-      process.stderr.write(`claude-session: id must be >= 4 chars: '${id}'\n`);
+      process.stderr.write(`csm: id must be >= 4 chars: '${id}'\n`);
       process.exit(2);
     }
     const matches = allFiles.filter((f) => basename(f).startsWith(id));
     if (matches.length === 0) {
-      process.stderr.write(`claude-session: no match for '${id}'\n`);
+      process.stderr.write(`csm: no match for '${id}'\n`);
       process.exit(1);
     }
     if (matches.length > 1) {
-      process.stderr.write(`claude-session: '${id}' is ambiguous, matches:\n`);
+      process.stderr.write(`csm: '${id}' is ambiguous, matches:\n`);
       for (const m of matches) process.stderr.write(`  ${m}\n`);
       process.exit(1);
     }
@@ -508,14 +509,14 @@ async function cmdDelete(args: string[]) {
   }
 }
 
-const USAGE = `claude-session — manage Claude Code session logs
+const USAGE = `csm — Claude Session Manager
 
 Usage:
-  claude-session list [--here]
-  claude-session start [<name>] [-- claude-flags...]
-  claude-session resume <id|title> [-- claude-flags...]
-  claude-session delete <id> [<id>...] [-f|--force]
-  claude-session help
+  csm list [--here]
+  csm start [<name>] [-- claude-flags...]
+  csm resume <id|title> [-- claude-flags...]
+  csm delete <id> [<id>...] [-f|--force]
+  csm help
 
 Commands:
   list                  Show all sessions across projects, newest first.
@@ -557,7 +558,7 @@ async function main(args: string[]) {
     case undefined:
       process.stdout.write(USAGE); break;
     default:
-      process.stderr.write(`claude-session: unknown command: ${sub}\n`);
+      process.stderr.write(`csm: unknown command: ${sub}\n`);
       process.stdout.write(USAGE);
       process.exit(2);
   }

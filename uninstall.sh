@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# claude-session uninstaller
+# csm (Claude Session Manager) uninstaller
 #
 #   curl -fsSL https://raw.githubusercontent.com/JungmoKoo/claude-session-manager/main/uninstall.sh | bash
 #
@@ -9,12 +9,16 @@
 set -euo pipefail
 
 DEST_DIR="${PREFIX:-$HOME/.local/bin}"
-DEST="$DEST_DIR/claude-session"
-DEST_TS="$DEST_DIR/claude-session.ts"
-DEST_CMD="$DEST_DIR/claude-session.cmd"
+DEST="$DEST_DIR/csm"
+DEST_TS="$DEST_DIR/csm.ts"
+DEST_CMD="$DEST_DIR/csm.cmd"
+
+# Also clean up the pre-rename "claude-session" install if it's still
+# sitting around from a previous version.
+LEGACY=( "$DEST_DIR/claude-session" "$DEST_DIR/claude-session.ts" "$DEST_DIR/claude-session.cmd" )
 
 removed=0
-for f in "$DEST" "$DEST_TS" "$DEST_CMD"; do
+for f in "$DEST" "$DEST_TS" "$DEST_CMD" "${LEGACY[@]}"; do
   if [[ -e "$f" || -L "$f" ]]; then
     rm -f "$f"
     echo "removed $f"

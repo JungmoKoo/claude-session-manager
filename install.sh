@@ -1,30 +1,30 @@
 #!/usr/bin/env bash
-# claude-session installer
+# csm (Claude Session Manager) installer
 #
 #   curl -fsSL https://raw.githubusercontent.com/JungmoKoo/claude-session-manager/main/install.sh | bash
 #
 # Env overrides:
-#   CLAUDE_SESSION_REPO    e.g. "JungmoKoo/claude-session-manager"   (default below)
-#   CLAUDE_SESSION_BRANCH  e.g. "main" (default)
-#   PREFIX                 install dir (default: $HOME/.local/bin)
+#   CSM_REPO     e.g. "JungmoKoo/claude-session-manager"   (default below)
+#   CSM_BRANCH   e.g. "main" (default)
+#   PREFIX       install dir (default: $HOME/.local/bin)
 set -euo pipefail
 
-REPO="${CLAUDE_SESSION_REPO:-JungmoKoo/claude-session-manager}"
-BRANCH="${CLAUDE_SESSION_BRANCH:-main}"
+REPO="${CSM_REPO:-JungmoKoo/claude-session-manager}"
+BRANCH="${CSM_BRANCH:-main}"
 DEST_DIR="${PREFIX:-$HOME/.local/bin}"
-TS_URL="https://raw.githubusercontent.com/$REPO/$BRANCH/claude-session.ts"
-TS_DEST="$DEST_DIR/claude-session.ts"
-WRAPPER="$DEST_DIR/claude-session"
+TS_URL="https://raw.githubusercontent.com/$REPO/$BRANCH/csm.ts"
+TS_DEST="$DEST_DIR/csm.ts"
+WRAPPER="$DEST_DIR/csm"
 
 mkdir -p "$DEST_DIR"
 
-# --- 1) Drop claude-session.ts --------------------------------------------
+# --- 1) Drop csm.ts -------------------------------------------------------
 # Use the local file (git-clone install) when it sits next to install.sh,
 # otherwise fetch the canonical copy from the repo.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd 2>/dev/null || true)"
-if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/claude-session.ts" ]; then
-  cp "$SCRIPT_DIR/claude-session.ts" "$TS_DEST"
-  echo "[OK] claude-session.ts (local) -> $TS_DEST"
+if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/csm.ts" ]; then
+  cp "$SCRIPT_DIR/csm.ts" "$TS_DEST"
+  echo "[OK] csm.ts (local) -> $TS_DEST"
 else
   echo "Downloading $TS_URL"
   if command -v curl >/dev/null; then
@@ -34,7 +34,7 @@ else
   else
     echo "error: need curl or wget" >&2; exit 1
   fi
-  echo "[OK] claude-session.ts (fetched) -> $TS_DEST"
+  echo "[OK] csm.ts (fetched) -> $TS_DEST"
 fi
 
 # --- 2) Wrapper script ----------------------------------------------------
@@ -53,11 +53,11 @@ elif [ -x "$HOME/.bun/bin/bun.exe" ]; then
   BUN="$HOME/.bun/bin/bun.exe"
 fi
 if [ -z "$BUN" ]; then
-  echo "claude-session: 'bun' not found." >&2
+  echo "csm: 'bun' not found." >&2
   echo "  Install: curl -fsSL https://bun.sh/install | bash" >&2
   exit 1
 fi
-exec "$BUN" "$DIR/claude-session.ts" "$@"
+exec "$BUN" "$DIR/csm.ts" "$@"
 EOF
 chmod +x "$WRAPPER"
 echo "[OK] wrapper -> $WRAPPER"
@@ -68,14 +68,14 @@ echo "[OK] wrapper -> $WRAPPER"
 # so we drop a tiny .cmd that calls bun directly on the .ts.
 case "$(uname)" in
   MINGW*|MSYS*|CYGWIN*)
-    cat >"$DEST_DIR/claude-session.cmd" <<'CMD'
+    cat >"$DEST_DIR/csm.cmd" <<'CMD'
 @echo off
 setlocal
 set "BUN=%USERPROFILE%\.bun\bin\bun.exe"
 if not exist "%BUN%" set "BUN=bun"
-"%BUN%" "%~dp0claude-session.ts" %*
+"%BUN%" "%~dp0csm.ts" %*
 CMD
-    echo "[OK] Windows shim -> $DEST_DIR/claude-session.cmd"
+    echo "[OK] Windows shim -> $DEST_DIR/csm.cmd"
     ;;
 esac
 
@@ -101,5 +101,5 @@ fi
 
 echo
 echo "🎉  Installation complete!"
-echo "👉  Try:  claude-session help"
-echo "👉  List your sessions:  claude-session list"
+echo "👉  Try:  csm help"
+echo "👉  List your sessions:  csm list"

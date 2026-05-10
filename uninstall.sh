@@ -29,7 +29,11 @@ if (( ! removed )); then
 fi
 
 echo
-echo "Note: your Claude Code session data is untouched."
-echo "  ~/.claude/projects/         (session logs)"
-echo "  ~/.claude/history.jsonl     (prompt history)"
-echo "Delete those manually if you want — claude-session never owned them."
+if (( removed )); then
+  echo "✅  Uninstall complete!"
+else
+  echo "ℹ️   Nothing to uninstall."
+fi
+echo "👉  Your Claude Code session data is preserved (delete manually if you want):"
+echo "      ~/.claude/projects/        (session logs)"
+echo "      ~/.claude/history.jsonl    (prompt history)"

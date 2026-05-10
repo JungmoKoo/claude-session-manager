@@ -51,11 +51,12 @@ winget install jqlang.jq
 ## Usage
 
 ```
-claude-session list              # all sessions, newest first
-claude-session list --here       # only sessions started in $PWD
-claude-session resume <id>       # resume a session in its original project
-claude-session delete <id>       # delete by UUID or unique 4+ char prefix
-claude-session delete <id> -f    # skip confirmation
+claude-session list                  # all sessions, newest first
+claude-session list --here           # only sessions started in $PWD
+claude-session start <name>          # launch a new session pre-named with <name>
+claude-session resume <id|title>     # resume by UUID prefix or by session title
+claude-session delete <id>           # delete by UUID or unique 4+ char prefix
+claude-session delete <id> -f        # skip confirmation
 claude-session help
 ```
 
@@ -68,12 +69,19 @@ e5f6a7b8  2026-04-11 09:15:48  /review                                   42  ~/p
 9c8d7e6f  2026-04-10 18:44:22  /plan add OAuth login                    310  ~/projects/another-app
 ```
 
-`resume` and `delete` both accept UUID prefixes (≥ 4 chars). Ambiguous prefixes
-are rejected to prevent acting on the wrong session. `resume` reads the
-session's original `cwd` from the JSONL itself (more reliable than decoding
-the project directory name) and `cd`s there before handing off to
-`claude --resume <uuid>`. The session's sidecar directory (`<uuid>/`) is
-removed by `delete` alongside the `.jsonl`.
+`resume` accepts a UUID prefix (≥ 4 hex chars) or a session title
+(case-insensitive substring match against the same title shown by `list`).
+Ambiguous queries are rejected to prevent acting on the wrong session.
+`resume` reads the session's original `cwd` from the JSONL itself (more
+reliable than decoding the project directory name) and `cd`s there before
+handing off to `claude --resume <uuid>`.
+
+`start <name>` execs `claude --name <name>`, which sets the same display
+title that `/rename` writes — saving a `/rename` step at the top of a fresh
+session.
+
+`delete` accepts UUID prefixes (≥ 4 chars). The session's sidecar directory
+(`<uuid>/`) is removed alongside the `.jsonl`.
 
 ## Uninstall
 

@@ -413,15 +413,15 @@ async function cmdList(args: string[]) {
 }
 
 async function cmdStart(args: string[]) {
-  const name = args[0];
-  if (!name) {
-    process.stderr.write("claude-session: start requires <name>\n");
-    process.exit(2);
-  }
-  const extra = await maybePickMode(args.slice(1));
-  // `claude --name` is the CLI equivalent of running `/rename <name>` once
-  // the session is up: both set the display title shown in the /resume picker.
-  execClaude(["--name", name, ...extra]);
+  // First positional (if not a flag) becomes the session name; without it
+  // we just launch a plain `claude`. `claude --name <name>` is the CLI
+  // equivalent of running `/rename <name>` once the session is up — both
+  // set the display title shown in the /resume picker.
+  const hasName = args.length > 0 && !args[0].startsWith("-");
+  const name = hasName ? args[0] : undefined;
+  const rest = hasName ? args.slice(1) : args;
+  const extra = await maybePickMode(rest);
+  execClaude(name ? ["--name", name, ...extra] : extra);
 }
 
 async function cmdResume(args: string[]) {
@@ -512,7 +512,7 @@ const USAGE = `claude-session — manage Claude Code session logs
 
 Usage:
   claude-session list [--here]
-  claude-session start <name> [-- claude-flags...]
+  claude-session start [<name>] [-- claude-flags...]
   claude-session resume <id|title> [-- claude-flags...]
   claude-session delete <id> [<id>...] [-f|--force]
   claude-session help
@@ -520,14 +520,14 @@ Usage:
 Commands:
   list                  Show all sessions across projects, newest first.
                         --here   only sessions for the current directory.
-  start <name> [args]   Launch a new session with <name> as its display title
-                        (equivalent to running \`/rename <name>\` inside claude).
-                        Execs \`claude --name <name> [args]\`.
+  start [<name>] [args] Launch a new session. If <name> is given, sets it as
+                        the display title (equivalent to \`/rename <name>\`
+                        inside claude); otherwise launches plain \`claude\`.
                         With no args and a TTY, prompts:
                           1) default
                           2) dangerously-skip-permissions
-                        Any args after <name> are forwarded verbatim to \`claude\`
-                        and bypass the prompt.
+                        Any args (besides <name>) are forwarded verbatim to
+                        \`claude\` and bypass the prompt.
   resume <id|title>     Resume a session by UUID prefix (>= 4 hex chars) or by
         [args]          title (case-insensitive substring match against the
                         same title shown by \`list\`). Cd's into the session's

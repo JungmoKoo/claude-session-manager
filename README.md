@@ -45,7 +45,7 @@ curl -fsSL https://raw.githubusercontent.com/JungmoKoo/claude-session-manager/ma
 ```bash
 claude-session list                # all sessions, newest first
 claude-session list --here         # only sessions started in $PWD
-claude-session start <name>        # launch a new session pre-named
+claude-session start [<name>]      # launch a new session (optionally pre-named)
 claude-session resume <id|title>   # resume by UUID prefix or title
 claude-session delete <id>         # delete by UUID prefix
 claude-session help
@@ -53,7 +53,8 @@ claude-session help
 
 `resume` accepts a UUID prefix (≥ 4 hex chars) **or** a case-insensitive title
 substring. `start <name>` execs `claude --name <name>` — equivalent to running
-`/rename` at the top of a fresh session.
+`/rename` at the top of a fresh session. `start` with no name just launches
+a plain `claude` (with the same TTY picker for permission mode).
 
 ## ↩️ Uninstall
 

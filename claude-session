@@ -71,7 +71,7 @@ claude-session — manage Claude Code session logs
 Usage:
   claude-session list [--here]
   claude-session start <name> [-- claude-flags...]
-  claude-session resume <id> [-- claude-flags...]
+  claude-session resume <id|title> [-- claude-flags...]
   claude-session delete <id> [<id>...] [-f|--force]
   claude-session help
 
@@ -86,14 +86,16 @@ Commands:
                           2) dangerously-skip-permissions
                         Any args after <name> are forwarded verbatim to `claude`
                         and bypass the prompt.
-  resume <id> [args]    Resume a session by UUID or unique prefix (>= 4 chars).
-                        Cd's into the session's original project, then execs
+  resume <id|title>     Resume a session by UUID prefix (>= 4 hex chars) or by
+        [args]          title (case-insensitive substring match against the
+                        same title shown by `list`). Cd's into the session's
+                        original project, then execs
                         `claude --resume <uuid> [args]`.
                         With no args and a TTY, prompts:
                           1) default
                           2) dangerously-skip-permissions
-                        Any args after <id> are forwarded verbatim to `claude`
-                        and bypass the prompt (e.g. --tmux, custom flags).
+                        Any args after the query are forwarded verbatim to
+                        `claude` and bypass the prompt (e.g. --tmux, custom flags).
   delete <id>           Delete by UUID or unique UUID prefix (>= 4 chars).
                         Removes the .jsonl AND its sidecar dir.
                         -f / --force  skip confirmation.
@@ -478,28 +480,93 @@ cmd_start() {
   exec claude --name "$name" "$@"
 }
 
-cmd_resume() {
-  local id="${1:-}"
-  [[ -n "$id" ]] || { echo "claude-session: resume requires <id>" >&2; return 2; }
-  shift  # remaining "$@" is forwarded verbatim to `claude --resume`
-  if (( ${#id} < 4 )); then
-    echo "claude-session: id must be >= 4 chars: '$id'" >&2; return 2
+# Resolve a query (UUID prefix or title) to a single session .jsonl path.
+# Echoes the path on stdout when unique; otherwise writes a diagnostic to
+# stderr and returns nonzero. UUID-prefix path requires hex-only input of
+# >= 4 chars so that titles like "/review" or "auth" aren't misread as IDs.
+# Title matching is case-insensitive substring against the same resolution
+# chain `list` uses: custom-title -> history.display -> last-prompt.
+resolve_session() {
+  local q="$1"
+  local id_matches=()
+
+  if (( ${#q} >= 4 )) && [[ "$q" =~ ^[0-9a-fA-F-]+$ ]]; then
+    shopt -s nullglob
+    id_matches=( "$ROOT"/*/"$q"*.jsonl )
+    shopt -u nullglob
+  fi
+  if (( ${#id_matches[@]} == 1 )); then
+    printf '%s' "${id_matches[0]}"
+    return 0
   fi
 
+  load_history_titles
   shopt -s nullglob
-  local matches=( "$ROOT"/*/"$id"*.jsonl )
+  local all_files=( "$ROOT"/*/*.jsonl )
   shopt -u nullglob
-  case "${#matches[@]}" in
-    0) echo "claude-session: no match for '$id'" >&2; return 1 ;;
-    1) ;;
-    *) echo "claude-session: '$id' is ambiguous, matches:" >&2
-       printf '  %s\n' "${matches[@]}" >&2; return 1 ;;
-  esac
+
+  local q_lower
+  q_lower="$(printf '%s' "$q" | tr '[:upper:]' '[:lower:]')"
+
+  local title_matches=() f sid title title_lower
+  for f in "${all_files[@]}"; do
+    sid="$(basename "$f" .jsonl)"
+    title="$(custom_title_from_jsonl "$f")"
+    [[ -z "$title" ]] && title="$(title_for_session "$sid")"
+    if [[ -z "$title" ]]; then
+      title="$( { jq -r '
+          select(.type=="last-prompt" and .lastPrompt!=null) | .lastPrompt
+        ' "$f" 2>/dev/null | head -n1; } || true )"
+    fi
+    [[ -z "$title" ]] && continue
+    title_lower="$(printf '%s' "$title" | tr '[:upper:]' '[:lower:]')"
+    # Quoted RHS makes glob meta in $q_lower (e.g. '*', '?') match literally.
+    if [[ "$title_lower" == *"$q_lower"* ]]; then
+      title_matches+=( "$f" )
+    fi
+  done
+
+  if (( ${#title_matches[@]} == 1 )); then
+    printf '%s' "${title_matches[0]}"
+    return 0
+  fi
+
+  if (( ${#id_matches[@]} > 1 && ${#title_matches[@]} == 0 )); then
+    {
+      echo "claude-session: '$q' is ambiguous, matches:"
+      printf '  %s\n' "${id_matches[@]}"
+    } >&2
+    return 1
+  fi
+  if (( ${#title_matches[@]} > 1 )); then
+    {
+      echo "claude-session: '$q' is ambiguous, matches:"
+      for f in "${title_matches[@]}"; do
+        sid="$(basename "$f" .jsonl)"
+        title="$(custom_title_from_jsonl "$f")"
+        [[ -z "$title" ]] && title="$(title_for_session "$sid")"
+        [[ -z "$title" ]] && title="(no prompt)"
+        printf '  %s  %s\n' "${sid:0:8}" "$title"
+      done
+    } >&2
+    return 1
+  fi
+  echo "claude-session: no match for '$q'" >&2
+  return 1
+}
+
+cmd_resume() {
+  local query="${1:-}"
+  [[ -n "$query" ]] \
+    || { echo "claude-session: resume requires <id-or-title>" >&2; return 2; }
+  shift  # remaining "$@" is forwarded verbatim to `claude --resume`
+
+  local f
+  f="$(resolve_session "$query")" || return $?
 
   command -v claude >/dev/null \
     || { echo "claude-session: 'claude' CLI not found on PATH" >&2; return 1; }
 
-  local f="${matches[0]}"
   local full_id; full_id="$(basename "$f" .jsonl)"
 
   # The session's original cwd is stored in the JSONL itself. Decoding the

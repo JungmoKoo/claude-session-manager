@@ -450,38 +450,21 @@ async function cmdResume(args: string[]) {
 
 async function cmdDelete(args: string[]) {
   let force = false;
-  const ids: string[] = [];
+  const queries: string[] = [];
   for (const a of args) {
     if (a === "-f" || a === "--force") force = true;
     else if (a.startsWith("-")) {
       process.stderr.write(`csm: unknown flag: ${a}\n`);
       process.exit(2);
-    } else ids.push(a);
+    } else queries.push(a);
   }
-  if (ids.length === 0) {
-    process.stderr.write("csm: delete requires <id>\n");
+  if (queries.length === 0) {
+    process.stderr.write("csm: delete requires <id|title>\n");
     process.exit(2);
   }
 
-  const allFiles = await listSessionFiles(false);
   const toDelete: string[] = [];
-  for (const id of ids) {
-    if (id.length < 4) {
-      process.stderr.write(`csm: id must be >= 4 chars: '${id}'\n`);
-      process.exit(2);
-    }
-    const matches = allFiles.filter((f) => basename(f).startsWith(id));
-    if (matches.length === 0) {
-      process.stderr.write(`csm: no match for '${id}'\n`);
-      process.exit(1);
-    }
-    if (matches.length > 1) {
-      process.stderr.write(`csm: '${id}' is ambiguous, matches:\n`);
-      for (const m of matches) process.stderr.write(`  ${m}\n`);
-      process.exit(1);
-    }
-    toDelete.push(matches[0]);
-  }
+  for (const q of queries) toDelete.push(await resolveSession(q));
 
   console.log("About to delete:");
   for (const f of toDelete) {
@@ -515,7 +498,7 @@ Usage:
   csm list [--here]
   csm start [<name>] [-- claude-flags...]
   csm resume <id|title> [-- claude-flags...]
-  csm delete <id> [<id>...] [-f|--force]
+  csm delete <id|title> [<id|title>...] [-f|--force]
   csm help
 
 Commands:
@@ -539,8 +522,10 @@ Commands:
                           2) dangerously-skip-permissions
                         Any args after the query are forwarded verbatim to
                         \`claude\` and bypass the prompt.
-  delete <id>           Delete by UUID or unique UUID prefix (>= 4 chars).
-                        Removes the .jsonl AND its sidecar dir.
+  delete <id|title>     Delete by UUID prefix (>= 4 hex chars) or by title
+        [<id|title>...] (case-insensitive substring match, same chain \`list\`
+                        uses). Accepts multiple selectors. Removes each
+                        .jsonl AND its sidecar dir.
                         -f / --force  skip confirmation.
 `;
 
